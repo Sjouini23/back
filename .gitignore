@@ -1,0 +1,33 @@
+# === Node.js / Express ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+logs/
+uploads/
+.env
+.env.*.local
+.DS_Store
+
+# === Vercel / Netlify Build Output (React) ===
+build/
+dist/
+
+# === React ===
+*.log
+*.lock
+.cache/
+coverage/
+
+# === OS-specific ===
+Thumbs.db
+.DS_Store
+
+# === VSCode ===
+.vscode/
+
+# === Optional: backup files ===
+*.swp
+*.swo
+*.bak
+*.tmp
