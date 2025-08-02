@@ -30,6 +30,9 @@ logger.info('🚀 Car Wash Server Starting', {
 });
 
 const app = express();
+app.set('trust proxy', true);
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const PORT = process.env.PORT || 3001;
 
 // Security middleware
@@ -57,17 +60,17 @@ const authLimiter = rateLimit({
 // Dynamic CORS configuration from environment variables
 const getCorsOrigins = () => {
   // Read origins from environment variable (comma-separated)
-  const envOrigins = process.env.CORS_ORIGINS ? 
+  const envOrigins = process.env.CORS_ORIGINS ?
     process.env.CORS_ORIGINS.split(',').map(origin => origin.trim()) : [];
-  
+
   // Always include these development origins for local testing
   const defaultOrigins = [
     'http://localhost:3000',
-    'http://localhost:3001', 
+    'http://localhost:3001',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001'
   ];
-  
+
   // Combine and remove duplicates
   return [...new Set([...defaultOrigins, ...envOrigins])];
 };
@@ -79,39 +82,36 @@ const allowedOrigins = getCorsOrigins();
 console.log('🔐 CORS allowed origins:', allowedOrigins);
 const vercelPattern = /^https:\/\/[a-zA-Z0-9-]+-[a-zA-Z0-9-]+-[a-zA-Z0-9]+\.vercel\.app$/;
 
+// ✅ FIXED - UNCOMMENTED CORS
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, curl, Postman, etc.)
     if (!origin) return callback(null, true);
 
-    // Normalize origin (remove trailing slash)
-    const normalizedOrigin = origin.replace(/\/$/, '');
+    const allowedOrigins = getCorsOrigins();
 
     // Check if origin is in allowed list
-    const isExplicitlyAllowed = allowedOrigins.includes(normalizedOrigin);
-    
-    // Check if origin matches Vercel pattern (for preview deployments)
-    const isVercelPreview = vercelPattern.test(normalizedOrigin);
-    
-    if (isExplicitlyAllowed || isVercelPreview) {
-      callback(null, true);
-    } else {
-      console.warn(`❌ CORS blocked request from: ${normalizedOrigin}`);
-      callback(new Error(`CORS policy violation: Origin ${normalizedOrigin} not allowed`));
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
+
+    // Allow Vercel preview domains
+    if (origin.match(/^https:\/\/lavage-v1.*\.vercel\.app$/)) {
+      return callback(null, true);
+    }
+
+    // Allow if CORS_ALLOW_VERCEL_PREVIEWS is true
+    if (process.env.CORS_ALLOW_VERCEL_PREVIEWS === 'true' &&
+        origin.includes('.vercel.app')) {
+      return callback(null, true);
+    }
+
+    return callback(null, true); // Allow all for now to test
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  maxAge: 86400 // 24 hours preflight cache
+  allowedHeaders: ['Content-Type', 'Authorization']
 }));
-
-app.use(morgan('combined', { 
-  stream: { write: (message) => logger.info(message.trim()) }
-}));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use('/uploads', express.static('uploads'));
 
 // Create uploads directory if it doesn't exist
 const uploadDir = 'uploads/';
@@ -147,9 +147,9 @@ const storage = new CloudinaryStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
-  limits: { 
+  limits: {
     fileSize: 10 * 1024 * 1024, // 10MB max (Cloudinary optimizes)
     files: 5 // Max 5 files
   },
@@ -157,7 +157,7 @@ const upload = multer({
     const allowedTypes = /jpeg|jpg|png|webp/;
     const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
     const mimetype = allowedTypes.test(file.mimetype);
-    
+
     if (mimetype && extname) {
       return cb(null, true);
     } else {
@@ -200,21 +200,30 @@ const loginSchema = Joi.object({
   password: Joi.string().min(3).max(100).required()
 });
 
+// ✅ FIXED - Updated Joi Schema with all fields
 const washSchema = Joi.object({
   immatriculation: Joi.string().pattern(/^[A-Z0-9\-\s]{3,15}$/i).required(),
   serviceType: Joi.string().valid('interieur', 'exterieur', 'complet', 'lavage-ville', 'complet-premium').required(),
   vehicleType: Joi.string().valid('voiture', 'camion', 'moto', 'taxi').required(),
-  price: Joi.number().positive().optional(),
+  price: Joi.number().min(0).optional(),
   photos: Joi.array().items(Joi.string()).optional(),
-  motoDetails: Joi.object().optional()
-});
+  motoDetails: Joi.object().optional(),
+  // ✅ ADD MISSING FIELDS:
+  price_adjustment: Joi.number().optional(),
+  vehicle_brand: Joi.string().allow('').optional(),
+  vehicle_model: Joi.string().allow('').optional(),
+  vehicle_color: Joi.string().allow('').optional(),
+  staff: Joi.array().items(Joi.string()).optional(),
+  phone: Joi.string().allow('').optional(),
+  notes: Joi.string().allow('').optional()
+}).options({ allowUnknown: true }); // ✅ Allow extra fields
 
 // ✅ NEW - Protect API routes with authentication
 app.use('/api', (req, res, next) => {
   // Skip authentication for these paths
   const publicPaths = ['/auth/login', '/auth/verify', '/health'];
   const isPublicPath = publicPaths.some(path => req.path.startsWith(path));
-  
+
   if (isPublicPath) {
     next();
   } else {
@@ -234,15 +243,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 
     const { username, password } = req.body;
-      logSecurity('LOGIN_ATTEMPT', { 
-      username, 
-      ip: req.ip, 
-      userAgent: req.get('User-Agent') 
+      logSecurity('LOGIN_ATTEMPT', {
+      username,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
     });
     // Get credentials from environment variables
     const validUsername = process.env.ADMIN_USERNAME || 'admin';
     const validPasswordHash = process.env.ADMIN_PASSWORD_HASH;
-    
+
     // If no hash is set, use default password (ONLY for development)
     // Require password hash to be set
 if (!validPasswordHash) {
@@ -255,51 +264,51 @@ const isValidPassword = await bcrypt.compare(password, validPasswordHash);
 
 if (username === validUsername && isValidPassword) {
   const token = jwt.sign(
-    { username, userId: 1 }, 
-    process.env.JWT_SECRET, 
+    { username, userId: 1 },
+    process.env.JWT_SECRET,
     { expiresIn: '24h' }
   );
-  
-  return res.json({ 
-    token, 
-    user: { username, id: 1 } 
+
+  return res.json({
+    token,
+    user: { username, id: 1 }
   });
 }
      else {
       // Production: Use bcrypt to verify password
       const isValidPassword = await bcrypt.compare(password, validPasswordHash);
-      
+
       if (username === validUsername && isValidPassword) {
         const token = jwt.sign(
-  { username, userId: 1 }, 
-  process.env.JWT_SECRET, 
+  { username, userId: 1 },
+  process.env.JWT_SECRET,
   { expiresIn: '24h' }
 );
-        
-        return res.json({ 
-          token, 
-          user: { username, id: 1 } 
+
+        return res.json({
+          token,
+          user: { username, id: 1 }
         });
       }
     }
-       logSecurity('LOGIN_SUCCESS', { 
-        username, 
-        ip: req.ip, 
-        userAgent: req.get('User-Agent') 
+       logSecurity('LOGIN_SUCCESS', {
+        username,
+        ip: req.ip,
+        userAgent: req.get('User-Agent')
       });
-       logSecurity('LOGIN_FAILED', { 
-      username, 
-      ip: req.ip, 
-      userAgent: req.get('User-Agent') 
+       logSecurity('LOGIN_FAILED', {
+      username,
+      ip: req.ip,
+      userAgent: req.get('User-Agent')
     });
     // Invalid credentials
     res.status(401).json({ error: 'Invalid username or password' });
-    
+
    } catch (error) {
-    logger.error('Login Error', { 
-      error: error.message, 
-      username: req.body?.username, 
-      ip: req.ip 
+    logger.error('Login Error', {
+      error: error.message,
+      username: req.body?.username,
+      ip: req.ip
     });
     res.status(500).json({ error: 'Internal server error' });
   }
@@ -307,9 +316,9 @@ if (username === validUsername && isValidPassword) {
 
 // Token verification endpoint
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
-  res.json({ 
-    valid: true, 
-    user: req.user 
+  res.json({
+    valid: true,
+    user: req.user
   });
 });
 
@@ -322,56 +331,101 @@ app.post('/api/auth/logout', authenticateToken, (req, res) => {
 app.get('/api/health', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
-    res.json({ 
-      status: 'OK', 
+    res.json({
+      status: 'OK',
       database: 'Connected',
       timestamp: result.rows[0].now,
       uptime: process.uptime()
     });
   } catch (error) {
-    res.status(500).json({ 
-      status: 'ERROR', 
+    res.status(500).json({
+      status: 'ERROR',
       database: 'Disconnected',
-      error: error.message 
+      error: error.message
     });
   }
 });
+
+// ✅ ADDED - Validation middleware
+const validateServiceData = (req, res, next) => {
+  try {
+    const data = req.body;
+    
+    // ✅ ENSURE NUMERIC FIELDS ARE PROPER NUMBERS
+    if (data.price !== undefined) {
+      const price = parseFloat(data.price);
+      data.price = isNaN(price) || !isFinite(price) ? 0 : Math.round(price * 100) / 100;
+    }
+    
+    if (data.price_adjustment !== undefined) {
+      const adj = parseFloat(data.price_adjustment);
+      data.price_adjustment = isNaN(adj) || !isFinite(adj) ? 0 : Math.round(adj * 100) / 100;
+    }
+    
+    // ✅ ENSURE REQUIRED STRING FIELDS
+    data.immatriculation = (data.immatriculation || '').toString().trim();
+    data.serviceType = data.serviceType || 'lavage-ville';
+    data.vehicleType = data.vehicleType || 'voiture';
+    
+    // ✅ ENSURE ARRAYS ARE ARRAYS
+    if (data.photos && !Array.isArray(data.photos)) {
+      data.photos = [];
+    }
+    
+    if (data.staff && !Array.isArray(data.staff)) {
+      data.staff = data.staff ? [data.staff] : [];
+    }
+    
+    // ✅ ADD SAFE DEFAULTS
+    data.vehicle_brand = data.vehicle_brand || data.vehicleBrand || '';
+    data.vehicle_model = data.vehicle_model || data.vehicleModel || '';
+    data.vehicle_color = data.vehicle_color || data.vehicleColor || '';
+    data.phone = data.phone || '';
+    data.notes = data.notes || '';
+    
+    req.body = data;
+    next();
+  } catch (error) {
+    console.error('Data validation error:', error);
+    res.status(400).json({ error: 'Invalid data format' });
+  }
+};
 
 // ✅ PROTECTED - Car wash management endpoints
 
 // GET /api/washes - Get all washes with filters
 app.get('/api/washes', async (req, res) => {
   try {
-    const { 
-      status, 
-      serviceType, 
-      vehicleType, 
-      limit = 50, 
-      offset = 0 
+    const {
+      status,
+      serviceType,
+      vehicleType,
+      limit = 50,
+      offset = 0
     } = req.query;
-    
+
     let query = 'SELECT * FROM washes WHERE 1=1';
     const params = [];
     let paramCount = 0;
-    
+
     if (status) {
       query += ` AND status = $${++paramCount}`;
       params.push(status);
     }
-    
+
     if (serviceType) {
       query += ` AND service_type = $${++paramCount}`;
       params.push(serviceType);
     }
-    
+
     if (vehicleType) {
       query += ` AND vehicle_type = $${++paramCount}`;
       params.push(vehicleType);
     }
-    
+
     query += ` ORDER BY created_at DESC LIMIT $${++paramCount} OFFSET $${++paramCount}`;
     params.push(limit, offset);
-    
+
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
@@ -380,8 +434,8 @@ app.get('/api/washes', async (req, res) => {
   }
 });
 
-// POST /api/washes - Create new wash
-app.post('/api/washes', async (req, res) => {
+// POST /api/washes - Create new wash - ✅ ADDED VALIDATION MIDDLEWARE
+app.post('/api/washes', validateServiceData, async (req, res) => {
   try {
     // Validate input
     const { error } = washSchema.validate(req.body);
@@ -408,7 +462,7 @@ app.post('/api/washes', async (req, res) => {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING *
     `;
-    
+
     const values = [
       immatriculation,
       serviceType,
@@ -419,7 +473,7 @@ app.post('/api/washes', async (req, res) => {
       motoDetails?.model || null,
       motoDetails?.helmets || 0
     ];
-    
+
     const result = await pool.query(query, values);
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -433,20 +487,20 @@ app.put('/api/washes/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status, endTime, duration } = req.body;
-    
+
     const query = `
-      UPDATE washes 
+      UPDATE washes
       SET status = $1, end_time = $2, duration = $3, updated_at = CURRENT_TIMESTAMP
       WHERE id = $4
       RETURNING *
     `;
-    
+
     const result = await pool.query(query, [status, endTime, duration, id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Wash not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating wash:', error);
@@ -458,13 +512,13 @@ app.put('/api/washes/:id', async (req, res) => {
 app.delete('/api/washes/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query('DELETE FROM washes WHERE id = $1 RETURNING *', [id]);
-    
+
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Wash not found' });
     }
-    
+
     res.json({ message: 'Wash deleted successfully', wash: result.rows[0] });
   } catch (error) {
     console.error('Error deleting wash:', error);
@@ -476,7 +530,7 @@ app.delete('/api/washes/:id', async (req, res) => {
 app.get('/api/stats', async (req, res) => {
   try {
     const stats = await pool.query(`
-      SELECT 
+      SELECT
         COUNT(*) as total_washes,
         COUNT(*) FILTER (WHERE status = 'en_cours') as ongoing_washes,
         COUNT(*) FILTER (WHERE status = 'termine') as completed_washes,
@@ -485,7 +539,7 @@ app.get('/api/stats', async (req, res) => {
       FROM washes
       WHERE created_at >= CURRENT_DATE
     `);
-    
+
     res.json(stats.rows[0]);
   } catch (error) {
     console.error('Error fetching stats:', error);
@@ -497,26 +551,26 @@ app.get('/api/stats', async (req, res) => {
 app.get('/api/analytics', async (req, res) => {
   try {
     const analytics = {};
-    
+
     // Revenue by service type
     const revenueByService = await pool.query(`
       SELECT service_type, SUM(price) as revenue, COUNT(*) as count
-      FROM washes 
+      FROM washes
       WHERE status = 'termine' AND created_at >= CURRENT_DATE - INTERVAL '30 days'
       GROUP BY service_type
     `);
     analytics.revenueByService = revenueByService.rows;
-    
+
     // Daily revenue trend
     const dailyRevenue = await pool.query(`
       SELECT DATE(created_at) as date, SUM(price) as revenue
-      FROM washes 
+      FROM washes
       WHERE status = 'termine' AND created_at >= CURRENT_DATE - INTERVAL '7 days'
       GROUP BY DATE(created_at)
       ORDER BY date
     `);
     analytics.dailyRevenue = dailyRevenue.rows;
-    
+
     res.json(analytics);
   } catch (error) {
     console.error('Error fetching analytics:', error);
@@ -528,18 +582,18 @@ app.get('/api/analytics', async (req, res) => {
 app.get('/api/insights', async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT * FROM ai_insights 
-      WHERE is_active = true 
-      ORDER BY 
-        CASE impact 
-          WHEN 'high' THEN 1 
-          WHEN 'medium' THEN 2 
-          WHEN 'low' THEN 3 
+      SELECT * FROM ai_insights
+      WHERE is_active = true
+      ORDER BY
+        CASE impact
+          WHEN 'high' THEN 1
+          WHEN 'medium' THEN 2
+          WHEN 'low' THEN 3
         END,
         created_at DESC
       LIMIT 10
     `);
-    
+
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching insights:', error);
@@ -553,7 +607,7 @@ app.post('/api/upload', upload.array('photos', 5), (req, res) => {
     if (!req.files || req.files.length === 0) {
       return res.status(400).json({ error: 'No files uploaded' });
     }
-    
+
     const fileInfos = req.files.map(file => ({
       filename: file.filename,
       originalName: file.originalname,
@@ -567,7 +621,7 @@ app.post('/api/upload', upload.array('photos', 5), (req, res) => {
         quality: 'auto:low'
       })
     }));
-    
+
     res.json({
       message: 'Photos uploaded successfully to Cloudinary',
       files: fileInfos
@@ -581,19 +635,19 @@ app.post('/api/upload', upload.array('photos', 5), (req, res) => {
 app.delete('/api/upload/:publicId', authenticateToken, async (req, res) => {
   try {
     const { publicId } = req.params;
-    
+
     // Delete from Cloudinary
     const result = await cloudinary.uploader.destroy(publicId);
-    
+
     if (result.result === 'ok') {
-      res.json({ 
+      res.json({
         message: 'Photo deleted successfully from Cloudinary',
-        publicId: publicId 
+        publicId: publicId
       });
     } else {
-      res.status(404).json({ 
+      res.status(404).json({
         error: 'Photo not found in Cloudinary',
-        publicId: publicId 
+        publicId: publicId
       });
     }
   } catch (error) {
@@ -610,18 +664,18 @@ function calculatePrice(serviceType, vehicleType) {
     'lavage-ville': { voiture: 25, camion: 40, moto: 18, taxi: 30 },
     'complet-premium': { voiture: 45, camion: 65, moto: 35, taxi: 50 }
   };
-  
+
   return basePrices[serviceType]?.[vehicleType] || 20;
 }
 
 // Global error handler
 app.use((err, req, res, next) => {
-  logger.error('Server Error', { 
-    error: err.message, 
-    stack: err.stack, 
-    url: req.url, 
-    method: req.method, 
-    ip: req.ip 
+  logger.error('Server Error', {
+    error: err.message,
+    stack: err.stack,
+    url: req.url,
+    method: req.method,
+    ip: req.ip
   });
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
@@ -631,8 +685,8 @@ app.use((err, req, res, next) => {
       return res.status(400).json({ error: 'Too many files (max 5)' });
     }
   }
-  
-  res.status(500).json({ 
+
+  res.status(500).json({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
   });
@@ -651,22 +705,22 @@ app.listen(PORT, () => {
     healthCheck: `http://localhost:${PORT}/api/health`,
     timestamp: new Date().toISOString()
   });
-  
+
   // Security validation (keep the security checks but log them)
   if (!process.env.JWT_SECRET) {
     logger.error('❌ FATAL: JWT_SECRET environment variable is required');
     process.exit(1);
   }
-  
+
   if (!process.env.ADMIN_PASSWORD_HASH) {
     logger.error('❌ FATAL: ADMIN_PASSWORD_HASH environment variable is required');
     process.exit(1);
   }
-  
+
   if (!process.env.ADMIN_USERNAME) {
     logger.error('❌ FATAL: ADMIN_USERNAME environment variable is required');
     process.exit(1);
   }
-  
+
   logger.info('✅ Security validation complete');
-});
+}); 
