@@ -102,22 +102,29 @@ const setupDatabase = async () => {
     // Create washes table
     await appPool.query(`
       CREATE TABLE IF NOT EXISTS washes (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        immatriculation VARCHAR(20) NOT NULL,
-        service_type VARCHAR(20) NOT NULL CHECK (service_type IN ('interieur', 'exterieur', 'complet')),
-        vehicle_type VARCHAR(20) NOT NULL CHECK (vehicle_type IN ('voiture', 'camion', 'moto')),
-        price DECIMAL(10,2) NOT NULL,
-        start_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        end_time TIMESTAMP WITH TIME ZONE,
-        duration INTEGER,
-        status VARCHAR(20) DEFAULT 'en_cours' CHECK (status IN ('en_cours', 'termine')),
-        photos JSONB DEFAULT '[]'::jsonb,
-        moto_brand VARCHAR(50),
-        moto_model VARCHAR(50),
-        moto_helmets INTEGER DEFAULT 0 CHECK (moto_helmets >= 0 AND moto_helmets <= 4),
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-      )
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  immatriculation VARCHAR(20) NOT NULL,
+  service_type VARCHAR(50) NOT NULL DEFAULT 'lavage-ville',
+  vehicle_type VARCHAR(20) NOT NULL DEFAULT 'voiture',
+  price DECIMAL(10,2) DEFAULT 0,
+  price_adjustment DECIMAL(10,2) DEFAULT 0,
+  vehicle_brand VARCHAR(50),
+  vehicle_model VARCHAR(50), 
+  vehicle_color VARCHAR(30),
+  staff JSONB DEFAULT '[]'::jsonb,
+  phone VARCHAR(20),
+  notes TEXT,
+  photos JSONB DEFAULT '[]'::jsonb,
+  status VARCHAR(20) DEFAULT 'pending',
+  start_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  end_time TIMESTAMP WITH TIME ZONE,
+  duration INTEGER,
+  moto_brand VARCHAR(50),
+  moto_model VARCHAR(50), 
+  moto_helmets INTEGER DEFAULT 0,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+)
     `);
     console.log('✅ Table "washes" created');
 

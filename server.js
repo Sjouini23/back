@@ -233,7 +233,6 @@ app.use('/api', (req, res, next) => {
 
 // ✅ NEW - Authentication Routes
 
-// Login endpoint
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     // Validate input
@@ -243,68 +242,56 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
     }
 
     const { username, password } = req.body;
-      logSecurity('LOGIN_ATTEMPT', {
+    
+    logSecurity('LOGIN_ATTEMPT', {
       username,
       ip: req.ip,
       userAgent: req.get('User-Agent')
     });
+    
     // Get credentials from environment variables
     const validUsername = process.env.ADMIN_USERNAME || 'admin';
     const validPasswordHash = process.env.ADMIN_PASSWORD_HASH;
 
-    // If no hash is set, use default password (ONLY for development)
-    // Require password hash to be set
-if (!validPasswordHash) {
-  console.error('❌ ADMIN_PASSWORD_HASH environment variable is required');
-  return res.status(500).json({ error: 'Server configuration error' });
-}
-
-// Verify password with bcrypt
-const isValidPassword = await bcrypt.compare(password, validPasswordHash);
-
-if (username === validUsername && isValidPassword) {
-  const token = jwt.sign(
-    { username, userId: 1 },
-    process.env.JWT_SECRET,
-    { expiresIn: '24h' }
-  );
-
-  return res.json({
-    token,
-    user: { username, id: 1 }
-  });
-}
-     else {
-      // Production: Use bcrypt to verify password
-      const isValidPassword = await bcrypt.compare(password, validPasswordHash);
-
-      if (username === validUsername && isValidPassword) {
-        const token = jwt.sign(
-  { username, userId: 1 },
-  process.env.JWT_SECRET,
-  { expiresIn: '24h' }
-);
-
-        return res.json({
-          token,
-          user: { username, id: 1 }
-        });
-      }
+    // Check if password hash is configured
+    if (!validPasswordHash) {
+      console.error('❌ ADMIN_PASSWORD_HASH environment variable is required');
+      return res.status(500).json({ error: 'Server configuration error' });
     }
-       logSecurity('LOGIN_SUCCESS', {
+
+    // ✅ FIXED: Single, clear authentication logic
+    const isValidPassword = await bcrypt.compare(password, validPasswordHash);
+
+    if (username === validUsername && isValidPassword) {
+      // ✅ SUCCESS: Generate token
+      const token = jwt.sign(
+        { username, userId: 1 },
+        process.env.JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      logSecurity('LOGIN_SUCCESS', {
         username,
         ip: req.ip,
         userAgent: req.get('User-Agent')
       });
-       logSecurity('LOGIN_FAILED', {
-      username,
-      ip: req.ip,
-      userAgent: req.get('User-Agent')
-    });
-    // Invalid credentials
-    res.status(401).json({ error: 'Invalid username or password' });
 
-   } catch (error) {
+      return res.json({
+        token,
+        user: { username, id: 1 }
+      });
+    } else {
+      // ✅ FAILURE: Invalid credentials
+      logSecurity('LOGIN_FAILED', {
+        username,
+        ip: req.ip,
+        userAgent: req.get('User-Agent')
+      });
+      
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+  } catch (error) {
     logger.error('Login Error', {
       error: error.message,
       username: req.body?.username,
@@ -437,7 +424,6 @@ app.get('/api/washes', async (req, res) => {
 // POST /api/washes - Create new wash - ✅ ADDED VALIDATION MIDDLEWARE
 app.post('/api/washes', validateServiceData, async (req, res) => {
   try {
-    // Validate input
     const { error } = washSchema.validate(req.body);
     if (error) {
       return res.status(400).json({ error: error.details[0].message });
@@ -449,17 +435,24 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       vehicleType,
       price,
       photos = [],
+      vehicle_brand,
+      vehicle_model,
+      vehicle_color,
+      staff = [],
+      phone,
+      notes,
+      price_adjustment,
       motoDetails
     } = req.body;
 
-    // Calculate price if not provided
     const calculatedPrice = price || calculatePrice(serviceType, vehicleType);
 
     const query = `
       INSERT INTO washes (
         immatriculation, service_type, vehicle_type, price, photos,
-        moto_brand, moto_model, moto_helmets
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        vehicle_brand, vehicle_model, vehicle_color, staff, phone, notes,
+        price_adjustment, moto_brand, moto_model, moto_helmets
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *
     `;
 
@@ -469,6 +462,13 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       vehicleType,
       calculatedPrice,
       JSON.stringify(photos),
+      vehicle_brand || '',
+      vehicle_model || '',
+      vehicle_color || '',
+      JSON.stringify(staff),
+      phone || '',
+      notes || '',
+      price_adjustment || 0,
       motoDetails?.brand || null,
       motoDetails?.model || null,
       motoDetails?.helmets || 0
@@ -480,33 +480,7 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
     console.error('Error creating wash:', error);
     res.status(500).json({ error: error.message });
   }
-});
-
-// PUT /api/washes/:id - Update wash
-app.put('/api/washes/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status, endTime, duration } = req.body;
-
-    const query = `
-      UPDATE washes
-      SET status = $1, end_time = $2, duration = $3, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $4
-      RETURNING *
-    `;
-
-    const result = await pool.query(query, [status, endTime, duration, id]);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Wash not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating wash:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+}); 
 
 // DELETE /api/washes/:id - Delete wash
 app.delete('/api/washes/:id', async (req, res) => {
@@ -525,6 +499,75 @@ app.delete('/api/washes/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ✅ COMPLETE PUT endpoint for editing services
+app.put('/api/washes/:id', validateServiceData, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = washSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ error: error.details[0].message });
+    }
+
+    const {
+      immatriculation,
+      serviceType,
+      vehicleType,
+      price,
+      price_adjustment,
+      vehicle_brand,
+      vehicle_model,
+      vehicle_color,
+      staff,
+      phone,
+      notes,
+      photos,
+      status,
+      motoDetails
+    } = req.body;
+
+    const query = `
+      UPDATE washes
+      SET immatriculation = $1, service_type = $2, vehicle_type = $3, price = $4,
+          price_adjustment = $5, vehicle_brand = $6, vehicle_model = $7, 
+          vehicle_color = $8, staff = $9, phone = $10, notes = $11, 
+          photos = $12, status = $13, moto_brand = $14, moto_model = $15,
+          moto_helmets = $16, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $17
+      RETURNING *
+    `;
+
+    const values = [
+      immatriculation,
+      serviceType, 
+      vehicleType,
+      price || 0,
+      price_adjustment || 0,
+      vehicle_brand || '',
+      vehicle_model || '',
+      vehicle_color || '',
+      JSON.stringify(staff || []),
+      phone || '',
+      notes || '',
+      JSON.stringify(photos || []),
+      status || 'pending',
+      motoDetails?.brand || null,
+      motoDetails?.model || null,
+      motoDetails?.helmets || 0,
+      id
+    ];
+
+    const result = await pool.query(query, values);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Wash not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating wash:', error);
+    res.status(500).json({ error: error.message });
+  }
+}); 
 
 // GET /api/stats - Dashboard statistics
 app.get('/api/stats', async (req, res) => {
