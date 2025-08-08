@@ -422,6 +422,8 @@ app.get('/api/washes', async (req, res) => {
 });
 
 // POST /api/washes - Create new wash - ✅ ADDED VALIDATION MIDDLEWARE
+// Replace the POST /api/washes endpoint in server.js (around line 470-520):
+
 app.post('/api/washes', validateServiceData, async (req, res) => {
   try {
     const { error } = washSchema.validate(req.body);
@@ -446,13 +448,16 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
     } = req.body;
 
     const calculatedPrice = price || calculatePrice(serviceType, vehicleType);
+    const now = new Date().toISOString();
 
+    // ✅ FIXED: Match columns with values and include timer fields
     const query = `
       INSERT INTO washes (
         immatriculation, service_type, vehicle_type, price, photos,
         vehicle_brand, vehicle_model, vehicle_color, staff, phone, notes,
-        price_adjustment, moto_brand, moto_model, moto_helmets
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        price_adjustment, moto_brand, moto_model, moto_helmets,
+        time_started, is_active, status, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
       RETURNING *
     `;
 
@@ -471,7 +476,13 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       price_adjustment || 0,
       motoDetails?.brand || null,
       motoDetails?.model || null,
-      motoDetails?.helmets || 0
+      motoDetails?.helmets || 0,
+      // ✅ TIMER FIELDS
+      now,                    // time_started
+      true,                   // is_active
+      'active',               // status
+      now,                    // created_at
+      now                     // updated_at
     ];
 
     const result = await pool.query(query, values);
@@ -480,7 +491,7 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
     console.error('Error creating wash:', error);
     res.status(500).json({ error: error.message });
   }
-}); 
+});
 
 // DELETE /api/washes/:id - Delete wash
 app.delete('/api/washes/:id', async (req, res) => {
@@ -555,7 +566,69 @@ app.put('/api/washes/:id', validateServiceData, async (req, res) => {
       motoDetails?.helmets || 0,
       id
     ];
+// Add this NEW endpoint to server.js after the existing PUT endpoint (around line 400):
 
+// ✅ NEW - FINISH TIMER endpoint - THIS WAS MISSING!
+app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const now = new Date().toISOString();
+    
+    // Get the current service to calculate duration
+    const currentService = await pool.query('SELECT * FROM washes WHERE id = $1', [id]);
+    
+    if (currentService.rows.length === 0) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+    
+    const service = currentService.rows[0];
+    let totalDuration = 0;
+    
+    // Calculate duration if service has a start time
+    if (service.time_started) {
+      const startTime = new Date(service.time_started);
+      const endTime = new Date(now);
+      totalDuration = Math.floor((endTime - startTime) / 1000); // Duration in seconds
+    }
+    
+    // Update the service to mark it as finished
+    const query = `
+      UPDATE washes 
+      SET 
+        time_finished = $1,
+        total_duration = $2,
+        is_active = false,
+        status = 'completed',
+        updated_at = $1
+      WHERE id = $3
+      RETURNING *
+    `;
+    
+    const values = [now, totalDuration, id];
+    const result = await pool.query(query, values);
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+    
+    logger.info('Timer finished', {
+      serviceId: id,
+      duration: totalDuration,
+      durationMinutes: Math.floor(totalDuration / 60)
+    });
+    
+    res.json({
+      message: 'Timer stopped successfully',
+      service: result.rows[0],
+      duration: totalDuration,
+      durationMinutes: Math.floor(totalDuration / 60)
+    });
+    
+  } catch (error) {
+    logger.error('Error finishing timer:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
     const result = await pool.query(query, values);
 
     if (result.rows.length === 0) {
