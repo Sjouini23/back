@@ -649,18 +649,7 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-    const result = await pool.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Wash not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating wash:', error);
-    res.status(500).json({ error: error.message });
-  }
-}); 
+    
 
 // GET /api/stats - Dashboard statistics
 app.get('/api/stats', async (req, res) => {
