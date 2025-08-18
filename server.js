@@ -530,7 +530,61 @@ app.delete('/api/washes/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+app.put('/api/washes/:id', validateServiceData, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = washSchema.validate(req.body);
+    if (error) {
+      return res.status(400).json({ error: error.details[0].message });
+    }
 
+    const {
+      immatriculation,
+      serviceType,
+      vehicleType,
+      price,
+      price_adjustment,
+      vehicle_brand,
+      vehicle_model,
+      vehicle_color,
+      staff,
+      phone,
+      notes,
+      photos,
+      status,
+      motoDetails
+    } = req.body;
+
+    const query = `
+      UPDATE washes
+      SET immatriculation = $1, service_type = $2, vehicle_type = $3, price = $4,
+          price_adjustment = $5, vehicle_brand = $6, vehicle_model = $7, 
+          vehicle_color = $8, staff = $9, phone = $10, notes = $11, 
+          photos = $12, status = $13, moto_brand = $14, moto_model = $15,
+          moto_helmets = $16, updated_at = CURRENT_TIMESTAMP
+      WHERE id = $17
+      RETURNING *
+    `;
+
+    const values = [
+      immatriculation,
+      serviceType, 
+      vehicleType,
+      price || 0,
+      price_adjustment || 0,
+      vehicle_brand || '',
+      vehicle_model || '',
+      vehicle_color || '',
+      JSON.stringify(staff || []),
+      phone || '',
+      notes || '',
+      JSON.stringify(photos || []),
+      status || 'pending',
+      motoDetails?.brand || null,
+      motoDetails?.model || null,
+      motoDetails?.helmets || 0,
+      id
+    ];
 // ✅ NEW - FINISH TIMER endpoint - THIS WAS MISSING!
 // ✅ COMPLETE PUT endpoint for editing services
 app.put('/api/washes/:id', validateServiceData, async (req, res) => {
