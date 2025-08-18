@@ -444,11 +444,23 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       phone,
       notes,
       price_adjustment,
-      motoDetails
+      motoDetails,
+      date,        // 🚨 NEW: Accept date from frontend
+      createdAt    // 🚨 NEW: Accept createdAt from frontend
     } = req.body;
 
     const calculatedPrice = price || calculatePrice(serviceType, vehicleType);
-    const now = new Date().toISOString();
+    
+    // 🚨 FIX: Use custom date if provided, otherwise current time
+    const customDate = date ? new Date(date + 'T' + new Date().toTimeString().split(' ')[0]) : new Date();
+    const customCreatedAt = createdAt ? new Date(createdAt) : customDate;
+    const now = new Date().toISOString(); // Only for updated_at
+
+    console.log('🚀 Creating service with custom date:', {
+      received_date: date,
+      customDate: customDate.toISOString(),
+      immatriculation: immatriculation
+    });
 
     // ✅ FIXED: Match columns with values and include timer fields
     const query = `
@@ -477,15 +489,23 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       motoDetails?.brand || null,
       motoDetails?.model || null,
       motoDetails?.helmets || 0,
-      // ✅ TIMER FIELDS
-      now,                    // time_started
-      true,                   // is_active
-      'active',               // status
-      now,                    // created_at
-      now                     // updated_at
+      // 🚨 FIXED TIMER FIELDS - Use custom date
+      customDate.toISOString(),      // time_started (custom date!)
+      true,                          // is_active
+      'active',                      // status
+      customCreatedAt.toISOString(), // created_at (custom date!)
+      now                           // updated_at (always current time)
     ];
 
     const result = await pool.query(query, values);
+    
+    console.log('✅ Service created with custom date:', {
+      id: result.rows[0].id,
+      immatriculation: result.rows[0].immatriculation,
+      created_at: result.rows[0].created_at,
+      time_started: result.rows[0].time_started
+    });
+    
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating wash:', error);
