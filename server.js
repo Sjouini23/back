@@ -21,7 +21,7 @@ const { logger, logSecurity, logSlow } = require('./simple-logger');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const Joi = require('joi');
-const helmet = require('helmet');  // ← ADD THIS LINE
+const helmet = require('helmet');
 
 // NOW you can use logger (AFTER importing it)
 logger.info('🚀 Car Wash Server Starting', {
@@ -57,13 +57,10 @@ const authLimiter = rateLimit({
 });
 
 // CORS configuration
-// Dynamic CORS configuration from environment variables
 const getCorsOrigins = () => {
-  // Read origins from environment variable (comma-separated)
   const envOrigins = process.env.CORS_ORIGINS ?
     process.env.CORS_ORIGINS.split(',').map(origin => origin.trim()) : [];
 
-  // Always include these development origins for local testing
   const defaultOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
@@ -71,36 +68,26 @@ const getCorsOrigins = () => {
     'http://127.0.0.1:3001'
   ];
 
-  // Combine and remove duplicates
   return [...new Set([...defaultOrigins, ...envOrigins])];
 };
 
-// Call the function to get the origins array
 const allowedOrigins = getCorsOrigins();
-
-// Log what origins are allowed (for debugging)
 console.log('🔐 CORS allowed origins:', allowedOrigins);
-const vercelPattern = /^https:\/\/[a-zA-Z0-9-]+-[a-zA-Z0-9-]+-[a-zA-Z0-9]+\.vercel\.app$/;
 
-// ✅ FIXED - UNCOMMENTED CORS
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (mobile apps, curl, Postman, etc.)
     if (!origin) return callback(null, true);
 
     const allowedOrigins = getCorsOrigins();
 
-    // Check if origin is in allowed list
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
-    // Allow Vercel preview domains
     if (origin.match(/^https:\/\/lavage-v1.*\.vercel\.app$/)) {
       return callback(null, true);
     }
 
-    // Allow if CORS_ALLOW_VERCEL_PREVIEWS is true
     if (process.env.CORS_ALLOW_VERCEL_PREVIEWS === 'true' &&
         origin.includes('.vercel.app')) {
       return callback(null, true);
@@ -109,7 +96,7 @@ app.use(cors({
     return callback(null, true); // Allow all for now to test
   },
   credentials: true,
-  methods: ['GET', 'PATCH' ,'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'PATCH', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -119,9 +106,6 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
   console.log('📁 Created uploads directory');
 }
-
-// Multer configuration for photo uploads
-// ✅ NEW - Cloudinary configuration
 
 // Configure Cloudinary
 cloudinary.config({
@@ -134,7 +118,7 @@ cloudinary.config({
 const storage = new CloudinaryStorage({
   cloudinary: cloudinary,
   params: {
-    folder: 'jouini-carwash', // Organize uploads in folders
+    folder: 'jouini-carwash',
     allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
     transformation: [
       {
@@ -150,7 +134,7 @@ const storage = new CloudinaryStorage({
 const upload = multer({
   storage,
   limits: {
-    fileSize: 10 * 1024 * 1024, // 10MB max (Cloudinary optimizes)
+    fileSize: 10 * 1024 * 1024, // 10MB max
     files: 5 // Max 5 files
   },
   fileFilter: (req, file, cb) => {
@@ -165,8 +149,8 @@ const upload = multer({
     }
   }
 });
+
 // Database configuration
-const isProduction = process.env.NODE_ENV === 'production';
 const pool = new Pool({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
@@ -175,8 +159,7 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
 });
 
-
-// ✅ NEW - JWT Authentication Middleware
+// ✅ JWT Authentication Middleware
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -194,13 +177,12 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-// ✅ NEW - Input validation schemas
+// ✅ Input validation schemas
 const loginSchema = Joi.object({
   username: Joi.string().alphanum().min(3).max(30).required(),
   password: Joi.string().min(3).max(100).required()
 });
 
-// ✅ FIXED - Updated Joi Schema with all fields
 const washSchema = Joi.object({
   immatriculation: Joi.string().pattern(/^[A-Z0-9\-\s]{3,15}$/i).required(),
   serviceType: Joi.string().valid('interieur', 'exterieur', 'complet', 'lavage-ville', 'complet-premium').required(),
@@ -208,7 +190,6 @@ const washSchema = Joi.object({
   price: Joi.number().min(0).optional(),
   photos: Joi.array().items(Joi.string()).optional(),
   motoDetails: Joi.object().optional(),
-  // ✅ ADD MISSING FIELDS:
   price_adjustment: Joi.number().optional(),
   vehicle_brand: Joi.string().allow('').optional(),
   vehicle_model: Joi.string().allow('').optional(),
@@ -216,11 +197,10 @@ const washSchema = Joi.object({
   staff: Joi.array().items(Joi.string()).optional(),
   phone: Joi.string().allow('').optional(),
   notes: Joi.string().allow('').optional()
-}).options({ allowUnknown: true }); // ✅ Allow extra fields
+}).options({ allowUnknown: true });
 
-// ✅ NEW - Protect API routes with authentication
+// ✅ Protect API routes with authentication
 app.use('/api', (req, res, next) => {
-  // Skip authentication for these paths
   const publicPaths = ['/auth/login', '/auth/verify', '/health'];
   const isPublicPath = publicPaths.some(path => req.path.startsWith(path));
 
@@ -231,11 +211,9 @@ app.use('/api', (req, res, next) => {
   }
 });
 
-// ✅ NEW - Authentication Routes
-
+// ✅ Authentication Routes
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
-    // Validate input
     const { error } = loginSchema.validate(req.body);
     if (error) {
       return res.status(400).json({ error: error.details[0].message });
@@ -249,21 +227,17 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       userAgent: req.get('User-Agent')
     });
     
-    // Get credentials from environment variables
     const validUsername = process.env.ADMIN_USERNAME || 'admin';
     const validPasswordHash = process.env.ADMIN_PASSWORD_HASH;
 
-    // Check if password hash is configured
     if (!validPasswordHash) {
       console.error('❌ ADMIN_PASSWORD_HASH environment variable is required');
       return res.status(500).json({ error: 'Server configuration error' });
     }
 
-    // ✅ FIXED: Single, clear authentication logic
     const isValidPassword = await bcrypt.compare(password, validPasswordHash);
 
     if (username === validUsername && isValidPassword) {
-      // ✅ SUCCESS: Generate token
       const token = jwt.sign(
         { username, userId: 1 },
         process.env.JWT_SECRET,
@@ -281,7 +255,6 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
         user: { username, id: 1 }
       });
     } else {
-      // ✅ FAILURE: Invalid credentials
       logSecurity('LOGIN_FAILED', {
         username,
         ip: req.ip,
@@ -301,7 +274,6 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
   }
 });
 
-// Token verification endpoint
 app.get('/api/auth/verify', authenticateToken, (req, res) => {
   res.json({
     valid: true,
@@ -309,12 +281,10 @@ app.get('/api/auth/verify', authenticateToken, (req, res) => {
   });
 });
 
-// Logout endpoint
 app.post('/api/auth/logout', authenticateToken, (req, res) => {
   res.json({ message: 'Logged out successfully' });
 });
 
-// Health check endpoint (public)
 app.get('/api/health', async (req, res) => {
   try {
     const result = await pool.query('SELECT NOW()');
@@ -333,12 +303,11 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// ✅ ADDED - Validation middleware
+// ✅ Validation middleware
 const validateServiceData = (req, res, next) => {
   try {
     const data = req.body;
     
-    // ✅ ENSURE NUMERIC FIELDS ARE PROPER NUMBERS
     if (data.price !== undefined) {
       const price = parseFloat(data.price);
       data.price = isNaN(price) || !isFinite(price) ? 0 : Math.round(price * 100) / 100;
@@ -349,12 +318,10 @@ const validateServiceData = (req, res, next) => {
       data.price_adjustment = isNaN(adj) || !isFinite(adj) ? 0 : Math.round(adj * 100) / 100;
     }
     
-    // ✅ ENSURE REQUIRED STRING FIELDS
     data.immatriculation = (data.immatriculation || '').toString().trim();
     data.serviceType = data.serviceType || 'lavage-ville';
     data.vehicleType = data.vehicleType || 'voiture';
     
-    // ✅ ENSURE ARRAYS ARE ARRAYS
     if (data.photos && !Array.isArray(data.photos)) {
       data.photos = [];
     }
@@ -363,7 +330,6 @@ const validateServiceData = (req, res, next) => {
       data.staff = data.staff ? [data.staff] : [];
     }
     
-    // ✅ ADD SAFE DEFAULTS
     data.vehicle_brand = data.vehicle_brand || data.vehicleBrand || '';
     data.vehicle_model = data.vehicle_model || data.vehicleModel || '';
     data.vehicle_color = data.vehicle_color || data.vehicleColor || '';
@@ -421,9 +387,7 @@ app.get('/api/washes', async (req, res) => {
   }
 });
 
-// POST /api/washes - Create new wash - ✅ ADDED VALIDATION MIDDLEWARE
-// Replace the POST /api/washes endpoint in server.js (around line 470-520):
-
+// POST /api/washes - Create new wash
 app.post('/api/washes', validateServiceData, async (req, res) => {
   try {
     const { error } = washSchema.validate(req.body);
@@ -445,16 +409,15 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       notes,
       price_adjustment,
       motoDetails,
-      date,        // 🚨 NEW: Accept date from frontend
-      createdAt    // 🚨 NEW: Accept createdAt from frontend
+      date,
+      createdAt
     } = req.body;
 
     const calculatedPrice = price || calculatePrice(serviceType, vehicleType);
     
-    // 🚨 FIX: Use custom date if provided, otherwise current time
     const customDate = date ? new Date(date + 'T' + new Date().toTimeString().split(' ')[0]) : new Date();
     const customCreatedAt = createdAt ? new Date(createdAt) : customDate;
-    const now = new Date().toISOString(); // Only for updated_at
+    const now = new Date().toISOString();
 
     console.log('🚀 Creating service with custom date:', {
       received_date: date,
@@ -462,7 +425,6 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       immatriculation: immatriculation
     });
 
-    // ✅ FIXED: Match columns with values and include timer fields
     const query = `
       INSERT INTO washes (
         immatriculation, service_type, vehicle_type, price, photos,
@@ -489,12 +451,11 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       motoDetails?.brand || null,
       motoDetails?.model || null,
       motoDetails?.helmets || 0,
-      // 🚨 FIXED TIMER FIELDS - Use custom date
-      now,      // time_started (custom date!)
-      true,                          // is_active
-      'active',                      // status
-      customCreatedAt.toISOString(), // created_at (custom date!)
-      now                           // updated_at (always current time)
+      now,
+      true,
+      'active',
+      customCreatedAt.toISOString(),
+      now
     ];
 
     const result = await pool.query(query, values);
@@ -530,7 +491,8 @@ app.delete('/api/washes/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// ✅ COMPLETE PUT endpoint for editing services
+
+// ✅ PUT endpoint for editing services
 app.put('/api/washes/:id', validateServiceData, async (req, res) => {
   try {
     const { id } = req.params;
@@ -586,16 +548,27 @@ app.put('/api/washes/:id', validateServiceData, async (req, res) => {
       motoDetails?.helmets || 0,
       id
     ];
-// Add this NEW endpoint to server.js after the existing PUT endpoint (around line 400):
 
-// ✅ NEW - FINISH TIMER endpoint - THIS WAS MISSING!
-// ✅ COMPLETE PUT endpoint for editing services
+    const result = await pool.query(query, values);
 
-// ✅ SEPARATE FINISH endpoint (AFTER PUT is complete)
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Wash not found' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating wash:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ✅ PATCH endpoint for finishing services (THE MAIN FIX!)
 app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const now = new Date().toISOString();
+    
+    console.log('🎯 FINISH ENDPOINT HIT:', id);
     
     // Get the current service to calculate duration
     const currentService = await pool.query('SELECT * FROM washes WHERE id = $1', [id]);
@@ -611,7 +584,7 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
     if (service.time_started) {
       const startTime = new Date(service.time_started);
       const endTime = new Date(now);
-      totalDuration = Math.floor((endTime - startTime) / 1000); // Duration in seconds
+      totalDuration = Math.floor((endTime - startTime) / 1000);
     }
     
     // Update the service to mark it as finished
@@ -652,18 +625,6 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-    const result = await pool.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Wash not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating wash:', error);
-    res.status(500).json({ error: error.message });
-  }
-}); 
 
 // GET /api/stats - Dashboard statistics
 app.get('/api/stats', async (req, res) => {
@@ -691,7 +652,6 @@ app.get('/api/analytics', async (req, res) => {
   try {
     const analytics = {};
 
-    // Revenue by service type
     const revenueByService = await pool.query(`
       SELECT service_type, SUM(price) as revenue, COUNT(*) as count
       FROM washes
@@ -700,7 +660,6 @@ app.get('/api/analytics', async (req, res) => {
     `);
     analytics.revenueByService = revenueByService.rows;
 
-    // Daily revenue trend
     const dailyRevenue = await pool.query(`
       SELECT DATE(created_at) as date, SUM(price) as revenue
       FROM washes
@@ -750,9 +709,9 @@ app.post('/api/upload', upload.array('photos', 5), (req, res) => {
     const fileInfos = req.files.map(file => ({
       filename: file.filename,
       originalName: file.originalname,
-      size: file.bytes, // ✅ Cloudinary uses 'bytes' instead of 'size'
-      url: file.path, // ✅ Cloudinary URL (full HTTPS URL)
-      publicId: file.public_id, // ✅ Store for future reference/deletion
+      size: file.bytes,
+      url: file.path,
+      publicId: file.public_id,
       thumbnailUrl: cloudinary.url(file.public_id, {
         width: 200,
         height: 200,
@@ -770,12 +729,12 @@ app.post('/api/upload', upload.array('photos', 5), (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// ✅ NEW - DELETE /api/upload/:publicId - Delete photo from Cloudinary
+
+// DELETE /api/upload/:publicId - Delete photo from Cloudinary
 app.delete('/api/upload/:publicId', authenticateToken, async (req, res) => {
   try {
     const { publicId } = req.params;
 
-    // Delete from Cloudinary
     const result = await cloudinary.uploader.destroy(publicId);
 
     if (result.result === 'ok') {
@@ -794,6 +753,7 @@ app.delete('/api/upload/:publicId', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // Helper function to calculate price based on service and vehicle type
 function calculatePrice(serviceType, vehicleType) {
   const basePrices = {
@@ -845,7 +805,7 @@ app.listen(PORT, () => {
     timestamp: new Date().toISOString()
   });
 
-  // Security validation (keep the security checks but log them)
+  // Security validation
   if (!process.env.JWT_SECRET) {
     logger.error('❌ FATAL: JWT_SECRET environment variable is required');
     process.exit(1);
@@ -862,4 +822,4 @@ app.listen(PORT, () => {
   }
 
   logger.info('✅ Security validation complete');
-}); 
+});
