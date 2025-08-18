@@ -490,7 +490,7 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       motoDetails?.model || null,
       motoDetails?.helmets || 0,
       // 🚨 FIXED TIMER FIELDS - Use custom date
-      customDate.toISOString(),      // time_started (custom date!)
+      now,      // time_started (custom date!)
       true,                          // is_active
       'active',                      // status
       customCreatedAt.toISOString(), // created_at (custom date!)
