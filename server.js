@@ -567,7 +567,7 @@ app.put('/api/washes/:id', validateServiceData, async (req, res) => {
   }
 });
 
-// ✅ PATCH endpoint for finishing services (THE MAIN FIX!)
+// ✅ FIXED - FINISH TIMER endpoint 
 app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
@@ -585,14 +585,14 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
     const service = currentService.rows[0];
     let totalDuration = 0;
     
-    // ✅ Use correct column name (start_time, not time_started)
+    // ✅ Use correct column name (start_time)
     if (service.start_time) {
       const startTime = new Date(service.start_time);
       const endTime = new Date(now);
       totalDuration = Math.floor((endTime - startTime) / 1000);
     }
     
-    // ✅ Use correct column names (end_time, duration)
+    // ✅ FIXED: Use CURRENT_TIMESTAMP for updated_at instead of reusing $1
     const query = `
       UPDATE washes 
       SET 
@@ -600,7 +600,7 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
         duration = $2::integer,
         is_active = $3::boolean,
         status = $4,
-        updated_at = $1::timestamp
+        updated_at = CURRENT_TIMESTAMP
       WHERE id = $5
       RETURNING *
     `;
