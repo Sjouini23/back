@@ -21,7 +21,7 @@ const { logger, logSecurity, logSlow } = require('./simple-logger');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const Joi = require('joi');
-const helmet = require('helmet');  // ← ADD THIS LINE
+const helmet = require('helmet');
 
 // NOW you can use logger (AFTER importing it)
 logger.info('🚀 Car Wash Server Starting', {
@@ -80,9 +80,8 @@ const allowedOrigins = getCorsOrigins();
 
 // Log what origins are allowed (for debugging)
 console.log('🔐 CORS allowed origins:', allowedOrigins);
-const vercelPattern = /^https:\/\/[a-zA-Z0-9-]+-[a-zA-Z0-9-]+-[a-zA-Z0-9]+\.vercel\.app$/;
 
-// ✅ FIXED - UNCOMMENTED CORS
+// ✅ FIXED - CORS Configuration
 app.use(cors({
   origin: function (origin, callback) {
     // Allow requests with no origin (mobile apps, curl, Postman, etc.)
@@ -109,7 +108,7 @@ app.use(cors({
     return callback(null, true); // Allow all for now to test
   },
   credentials: true,
-  methods: ['GET', 'PATCH' ,'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'PATCH', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -119,9 +118,6 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
   console.log('📁 Created uploads directory');
 }
-
-// Multer configuration for photo uploads
-// ✅ NEW - Cloudinary configuration
 
 // Configure Cloudinary
 cloudinary.config({
@@ -165,6 +161,7 @@ const upload = multer({
     }
   }
 });
+
 // Database configuration
 const isProduction = process.env.NODE_ENV === 'production';
 const pool = new Pool({
@@ -174,7 +171,6 @@ const pool = new Pool({
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
 });
-
 
 // ✅ NEW - JWT Authentication Middleware
 const authenticateToken = (req, res, next) => {
@@ -231,8 +227,52 @@ app.use('/api', (req, res, next) => {
   }
 });
 
-// ✅ NEW - Authentication Routes
+// ✅ ADDED - Validation middleware
+const validateServiceData = (req, res, next) => {
+  try {
+    const data = req.body;
+    
+    // ✅ ENSURE NUMERIC FIELDS ARE PROPER NUMBERS
+    if (data.price !== undefined) {
+      const price = parseFloat(data.price);
+      data.price = isNaN(price) || !isFinite(price) ? 0 : Math.round(price * 100) / 100;
+    }
+    
+    if (data.price_adjustment !== undefined) {
+      const adj = parseFloat(data.price_adjustment);
+      data.price_adjustment = isNaN(adj) || !isFinite(adj) ? 0 : Math.round(adj * 100) / 100;
+    }
+    
+    // ✅ ENSURE REQUIRED STRING FIELDS
+    data.immatriculation = (data.immatriculation || '').toString().trim();
+    data.serviceType = data.serviceType || 'lavage-ville';
+    data.vehicleType = data.vehicleType || 'voiture';
+    
+    // ✅ ENSURE ARRAYS ARE ARRAYS
+    if (data.photos && !Array.isArray(data.photos)) {
+      data.photos = [];
+    }
+    
+    if (data.staff && !Array.isArray(data.staff)) {
+      data.staff = data.staff ? [data.staff] : [];
+    }
+    
+    // ✅ ADD SAFE DEFAULTS
+    data.vehicle_brand = data.vehicle_brand || data.vehicleBrand || '';
+    data.vehicle_model = data.vehicle_model || data.vehicleModel || '';
+    data.vehicle_color = data.vehicle_color || data.vehicleColor || '';
+    data.phone = data.phone || '';
+    data.notes = data.notes || '';
+    
+    req.body = data;
+    next();
+  } catch (error) {
+    console.error('Data validation error:', error);
+    res.status(400).json({ error: 'Invalid data format' });
+  }
+};
 
+// ✅ NEW - Authentication Routes
 app.post('/api/auth/login', authLimiter, async (req, res) => {
   try {
     // Validate input
@@ -333,51 +373,6 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
-// ✅ ADDED - Validation middleware
-const validateServiceData = (req, res, next) => {
-  try {
-    const data = req.body;
-    
-    // ✅ ENSURE NUMERIC FIELDS ARE PROPER NUMBERS
-    if (data.price !== undefined) {
-      const price = parseFloat(data.price);
-      data.price = isNaN(price) || !isFinite(price) ? 0 : Math.round(price * 100) / 100;
-    }
-    
-    if (data.price_adjustment !== undefined) {
-      const adj = parseFloat(data.price_adjustment);
-      data.price_adjustment = isNaN(adj) || !isFinite(adj) ? 0 : Math.round(adj * 100) / 100;
-    }
-    
-    // ✅ ENSURE REQUIRED STRING FIELDS
-    data.immatriculation = (data.immatriculation || '').toString().trim();
-    data.serviceType = data.serviceType || 'lavage-ville';
-    data.vehicleType = data.vehicleType || 'voiture';
-    
-    // ✅ ENSURE ARRAYS ARE ARRAYS
-    if (data.photos && !Array.isArray(data.photos)) {
-      data.photos = [];
-    }
-    
-    if (data.staff && !Array.isArray(data.staff)) {
-      data.staff = data.staff ? [data.staff] : [];
-    }
-    
-    // ✅ ADD SAFE DEFAULTS
-    data.vehicle_brand = data.vehicle_brand || data.vehicleBrand || '';
-    data.vehicle_model = data.vehicle_model || data.vehicleModel || '';
-    data.vehicle_color = data.vehicle_color || data.vehicleColor || '';
-    data.phone = data.phone || '';
-    data.notes = data.notes || '';
-    
-    req.body = data;
-    next();
-  } catch (error) {
-    console.error('Data validation error:', error);
-    res.status(400).json({ error: 'Invalid data format' });
-  }
-};
-
 // ✅ PROTECTED - Car wash management endpoints
 
 // GET /api/washes - Get all washes with filters
@@ -421,9 +416,7 @@ app.get('/api/washes', async (req, res) => {
   }
 });
 
-// POST /api/washes - Create new wash - ✅ ADDED VALIDATION MIDDLEWARE
-// Replace the POST /api/washes endpoint in server.js (around line 470-520):
-
+// POST /api/washes - Create new wash
 app.post('/api/washes', validateServiceData, async (req, res) => {
   try {
     const { error } = washSchema.validate(req.body);
@@ -445,16 +438,16 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       notes,
       price_adjustment,
       motoDetails,
-      date,        // 🚨 NEW: Accept date from frontend
-      createdAt    // 🚨 NEW: Accept createdAt from frontend
+      date,
+      createdAt
     } = req.body;
 
     const calculatedPrice = price || calculatePrice(serviceType, vehicleType);
     
-    // 🚨 FIX: Use custom date if provided, otherwise current time
+    // Use custom date if provided, otherwise current time
     const customDate = date ? new Date(date + 'T' + new Date().toTimeString().split(' ')[0]) : new Date();
     const customCreatedAt = createdAt ? new Date(createdAt) : customDate;
-    const now = new Date().toISOString(); // Only for updated_at
+    const now = new Date().toISOString();
 
     console.log('🚀 Creating service with custom date:', {
       received_date: date,
@@ -462,7 +455,6 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       immatriculation: immatriculation
     });
 
-    // ✅ FIXED: Match columns with values and include timer fields
     const query = `
       INSERT INTO washes (
         immatriculation, service_type, vehicle_type, price, photos,
@@ -489,12 +481,11 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       motoDetails?.brand || null,
       motoDetails?.model || null,
       motoDetails?.helmets || 0,
-      // 🚨 FIXED TIMER FIELDS - Use custom date
-      now,      // time_started (custom date!)
-      true,                          // is_active
-      'active',                      // status
-      customCreatedAt.toISOString(), // created_at (custom date!)
-      now                           // updated_at (always current time)
+      now,
+      true,
+      'active',
+      customCreatedAt.toISOString(),
+      now
     ];
 
     const result = await pool.query(query, values);
@@ -530,66 +521,8 @@ app.delete('/api/washes/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// ✅ COMPLETE PUT endpoint for editing services
-app.put('/api/washes/:id', validateServiceData, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { error } = washSchema.validate(req.body);
-    if (error) {
-      return res.status(400).json({ error: error.details[0].message });
-    }
 
-    const {
-      immatriculation,
-      serviceType,
-      vehicleType,
-      price,
-      price_adjustment,
-      vehicle_brand,
-      vehicle_model,
-      vehicle_color,
-      staff,
-      phone,
-      notes,
-      photos,
-      status,
-      motoDetails
-    } = req.body;
-
-    const query = `
-      UPDATE washes
-      SET immatriculation = $1, service_type = $2, vehicle_type = $3, price = $4,
-          price_adjustment = $5, vehicle_brand = $6, vehicle_model = $7, 
-          vehicle_color = $8, staff = $9, phone = $10, notes = $11, 
-          photos = $12, status = $13, moto_brand = $14, moto_model = $15,
-          moto_helmets = $16, updated_at = CURRENT_TIMESTAMP
-      WHERE id = $17
-      RETURNING *
-    `;
-
-    const values = [
-      immatriculation,
-      serviceType, 
-      vehicleType,
-      price || 0,
-      price_adjustment || 0,
-      vehicle_brand || '',
-      vehicle_model || '',
-      vehicle_color || '',
-      JSON.stringify(staff || []),
-      phone || '',
-      notes || '',
-      JSON.stringify(photos || []),
-      status || 'pending',
-      motoDetails?.brand || null,
-      motoDetails?.model || null,
-      motoDetails?.helmets || 0,
-      id
-    ];
-// Add this NEW endpoint to server.js after the existing PUT endpoint (around line 400):
-
-// ✅ NEW - FINISH TIMER endpoint - THIS WAS MISSING!
-// ✅ COMPLETE PUT endpoint for editing services
+// ✅ CLEAN PUT endpoint for editing services
 app.put('/api/washes/:id', validateServiceData, async (req, res) => {
   try {
     const { id } = req.params;
@@ -659,11 +592,13 @@ app.put('/api/washes/:id', validateServiceData, async (req, res) => {
   }
 });
 
-// ✅ SEPARATE FINISH endpoint (AFTER PUT is complete)
+// ✅ FINISH TIMER endpoint
 app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const now = new Date().toISOString();
+    
+    console.log('🎯 FINISH ENDPOINT HIT! Service ID:', id);
     
     // Get the current service to calculate duration
     const currentService = await pool.query('SELECT * FROM washes WHERE id = $1', [id]);
@@ -720,18 +655,6 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-    const result = await pool.query(query, values);
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Wash not found' });
-    }
-
-    res.json(result.rows[0]);
-  } catch (error) {
-    console.error('Error updating wash:', error);
-    res.status(500).json({ error: error.message });
-  }
-}); 
 
 // GET /api/stats - Dashboard statistics
 app.get('/api/stats', async (req, res) => {
@@ -775,7 +698,7 @@ app.get('/api/analytics', async (req, res) => {
       WHERE status = 'termine' AND created_at >= CURRENT_DATE - INTERVAL '7 days'
       GROUP BY DATE(created_at)
       ORDER BY date
-    `);
+    `;
     analytics.dailyRevenue = dailyRevenue.rows;
 
     res.json(analytics);
@@ -818,9 +741,9 @@ app.post('/api/upload', upload.array('photos', 5), (req, res) => {
     const fileInfos = req.files.map(file => ({
       filename: file.filename,
       originalName: file.originalname,
-      size: file.bytes, // ✅ Cloudinary uses 'bytes' instead of 'size'
-      url: file.path, // ✅ Cloudinary URL (full HTTPS URL)
-      publicId: file.public_id, // ✅ Store for future reference/deletion
+      size: file.bytes,
+      url: file.path,
+      publicId: file.public_id,
       thumbnailUrl: cloudinary.url(file.public_id, {
         width: 200,
         height: 200,
@@ -838,7 +761,8 @@ app.post('/api/upload', upload.array('photos', 5), (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// ✅ NEW - DELETE /api/upload/:publicId - Delete photo from Cloudinary
+
+// DELETE /api/upload/:publicId - Delete photo from Cloudinary
 app.delete('/api/upload/:publicId', authenticateToken, async (req, res) => {
   try {
     const { publicId } = req.params;
@@ -862,6 +786,7 @@ app.delete('/api/upload/:publicId', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // Helper function to calculate price based on service and vehicle type
 function calculatePrice(serviceType, vehicleType) {
   const basePrices = {
@@ -930,4 +855,4 @@ app.listen(PORT, () => {
   }
 
   logger.info('✅ Security validation complete');
-}); 
+});
