@@ -530,6 +530,7 @@ app.delete('/api/washes/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ✅ COMPLETE PUT endpoint for editing services
 app.put('/api/washes/:id', validateServiceData, async (req, res) => {
   try {
     const { id } = req.params;
@@ -585,6 +586,8 @@ app.put('/api/washes/:id', validateServiceData, async (req, res) => {
       motoDetails?.helmets || 0,
       id
     ];
+// Add this NEW endpoint to server.js after the existing PUT endpoint (around line 400):
+
 // ✅ NEW - FINISH TIMER endpoint - THIS WAS MISSING!
 // ✅ COMPLETE PUT endpoint for editing services
 app.put('/api/washes/:id', validateServiceData, async (req, res) => {
