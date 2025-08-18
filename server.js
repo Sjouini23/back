@@ -413,58 +413,62 @@ app.post('/api/washes', validateServiceData, async (req, res) => {
       createdAt
     } = req.body;
 
-    const calculatedPrice = price || calculatePrice(serviceType, vehicleType);
-    
+    // ✅ Ensure proper types
+    const calculatedPrice = parseFloat(price) || calculatePrice(serviceType, vehicleType);
     const customDate = date ? new Date(date + 'T' + new Date().toTimeString().split(' ')[0]) : new Date();
     const customCreatedAt = createdAt ? new Date(createdAt) : customDate;
     const now = new Date().toISOString();
 
-    console.log('🚀 Creating service with custom date:', {
-      received_date: date,
-      customDate: customDate.toISOString(),
-      immatriculation: immatriculation
+    // ✅ Validate required fields
+    if (!immatriculation || immatriculation.trim() === '') {
+      return res.status(400).json({ error: 'License plate is required' });
+    }
+
+    console.log('🚀 Creating service:', {
+      immatriculation: immatriculation,
+      serviceType: serviceType,
+      vehicleType: vehicleType
     });
 
+    // ✅ Use correct column names (start_time, not time_started)
     const query = `
       INSERT INTO washes (
         immatriculation, service_type, vehicle_type, price, photos,
         vehicle_brand, vehicle_model, vehicle_color, staff, phone, notes,
         price_adjustment, moto_brand, moto_model, moto_helmets,
-        time_started, is_active, status, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+        start_time, is_active, status, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4::decimal, $5::jsonb, $6, $7, $8, $9::jsonb, $10, $11, $12::decimal, $13, $14, $15::integer, $16::timestamp, $17::boolean, $18, $19::timestamp, $20::timestamp)
       RETURNING *
     `;
 
     const values = [
-      immatriculation,
-      serviceType,
-      vehicleType,
-      calculatedPrice,
-      JSON.stringify(photos),
-      vehicle_brand || '',
-      vehicle_model || '',
-      vehicle_color || '',
-      JSON.stringify(staff),
-      phone || '',
-      notes || '',
-      price_adjustment || 0,
-      motoDetails?.brand || null,
-      motoDetails?.model || null,
-      motoDetails?.helmets || 0,
-      now,
-      true,
-      'active',
-      customCreatedAt.toISOString(),
-      now
+      String(immatriculation).trim(),           // $1
+      String(serviceType),                      // $2  
+      String(vehicleType),                      // $3
+      calculatedPrice,                          // $4
+      JSON.stringify(photos || []),             // $5
+      String(vehicle_brand || ''),              // $6
+      String(vehicle_model || ''),              // $7
+      String(vehicle_color || ''),              // $8
+      JSON.stringify(staff || []),              // $9
+      String(phone || ''),                      // $10
+      String(notes || ''),                      // $11
+      parseFloat(price_adjustment) || 0,        // $12
+      motoDetails?.brand || null,               // $13
+      motoDetails?.model || null,               // $14
+      parseInt(motoDetails?.helmets) || 0,      // $15
+      now,                                      // $16
+      true,                                     // $17
+      'active',                                 // $18
+      customCreatedAt.toISOString(),           // $19
+      now                                       // $20
     ];
 
     const result = await pool.query(query, values);
     
-    console.log('✅ Service created with custom date:', {
+    console.log('✅ Service created successfully:', {
       id: result.rows[0].id,
-      immatriculation: result.rows[0].immatriculation,
-      created_at: result.rows[0].created_at,
-      time_started: result.rows[0].time_started
+      immatriculation: result.rows[0].immatriculation
     });
     
     res.status(201).json(result.rows[0]);
@@ -518,34 +522,35 @@ app.put('/api/washes/:id', validateServiceData, async (req, res) => {
       motoDetails
     } = req.body;
 
+    // ✅ Ensure proper types and handle nulls
     const query = `
       UPDATE washes
-      SET immatriculation = $1, service_type = $2, vehicle_type = $3, price = $4,
-          price_adjustment = $5, vehicle_brand = $6, vehicle_model = $7, 
-          vehicle_color = $8, staff = $9, phone = $10, notes = $11, 
-          photos = $12, status = $13, moto_brand = $14, moto_model = $15,
-          moto_helmets = $16, updated_at = CURRENT_TIMESTAMP
+      SET immatriculation = $1, service_type = $2, vehicle_type = $3, price = $4::decimal,
+          price_adjustment = $5::decimal, vehicle_brand = $6, vehicle_model = $7, 
+          vehicle_color = $8, staff = $9::jsonb, phone = $10, notes = $11, 
+          photos = $12::jsonb, status = $13, moto_brand = $14, moto_model = $15,
+          moto_helmets = $16::integer, updated_at = CURRENT_TIMESTAMP
       WHERE id = $17
       RETURNING *
     `;
 
     const values = [
-      immatriculation,
-      serviceType, 
-      vehicleType,
-      price || 0,
-      price_adjustment || 0,
-      vehicle_brand || '',
-      vehicle_model || '',
-      vehicle_color || '',
+      String(immatriculation || '').trim(),
+      String(serviceType || 'lavage-ville'), 
+      String(vehicleType || 'voiture'),
+      parseFloat(price) || 0,
+      parseFloat(price_adjustment) || 0,
+      String(vehicle_brand || ''),
+      String(vehicle_model || ''),
+      String(vehicle_color || ''),
       JSON.stringify(staff || []),
-      phone || '',
-      notes || '',
+      String(phone || ''),
+      String(notes || ''),
       JSON.stringify(photos || []),
-      status || 'pending',
+      String(status || 'pending'),
       motoDetails?.brand || null,
       motoDetails?.model || null,
-      motoDetails?.helmets || 0,
+      parseInt(motoDetails?.helmets) || 0,
       id
     ];
 
@@ -580,27 +585,27 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
     const service = currentService.rows[0];
     let totalDuration = 0;
     
-    // Calculate duration if service has a start time
-    if (service.time_started) {
-      const startTime = new Date(service.time_started);
+    // ✅ Use correct column name (start_time, not time_started)
+    if (service.start_time) {
+      const startTime = new Date(service.start_time);
       const endTime = new Date(now);
       totalDuration = Math.floor((endTime - startTime) / 1000);
     }
     
-    // Update the service to mark it as finished
+    // ✅ Use correct column names (end_time, duration)
     const query = `
       UPDATE washes 
       SET 
-        time_finished = $1,
-        total_duration = $2,
-        is_active = false,
-        status = 'completed',
-        updated_at = $1
-      WHERE id = $3
+        end_time = $1::timestamp,
+        duration = $2::integer,
+        is_active = $3::boolean,
+        status = $4,
+        updated_at = $1::timestamp
+      WHERE id = $5
       RETURNING *
     `;
     
-    const values = [now, totalDuration, id];
+    const values = [now, totalDuration, false, 'completed', id];
     const result = await pool.query(query, values);
     
     if (result.rows.length === 0) {
