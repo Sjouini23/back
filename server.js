@@ -703,8 +703,8 @@ app.get('/api/insights', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// 🔷 TV DISPLAY ENDPOINTS - FIXED LOGIC ONLY
-app.get('/api/tv/current-service', authenticateToken, async (req, res) => {
+// 🔷 TV DISPLAY ENDPOINTS - SUPPORT MULTIPLE SERVICES
+app.get('/api/tv/current-services', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
@@ -714,12 +714,12 @@ app.get('/api/tv/current-service', authenticateToken, async (req, res) => {
       WHERE status = 'active' AND is_active = true 
       AND DATE(created_at) = CURRENT_DATE
       ORDER BY start_time ASC 
-      LIMIT 1
+      LIMIT 5
     `);
     
-    res.json(result.rows[0] || null);
+    res.json(result.rows || []);
   } catch (error) {
-    console.error('Error fetching current service:', error);
+    console.error('Error fetching current services:', error);
     res.status(500).json({ error: error.message });
   }
 });
