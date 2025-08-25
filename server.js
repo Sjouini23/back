@@ -703,7 +703,7 @@ app.get('/api/insights', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// 🔷 TV DISPLAY ENDPOINTS - For https://lavage-v1.vercel.app/tv
+// 🔷 TV DISPLAY ENDPOINTS - FIXED LOGIC ONLY
 app.get('/api/tv/current-service', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -711,7 +711,8 @@ app.get('/api/tv/current-service', authenticateToken, async (req, res) => {
         id, immatriculation, vehicle_brand, vehicle_model, vehicle_color, 
         service_type, staff, start_time, price
       FROM washes 
-      WHERE status = 'en_cours' 
+      WHERE status = 'active' AND is_active = true 
+      AND DATE(created_at) = CURRENT_DATE
       ORDER BY start_time ASC 
       LIMIT 1
     `);
@@ -731,6 +732,7 @@ app.get('/api/tv/queue', authenticateToken, async (req, res) => {
         service_type, staff, created_at
       FROM washes 
       WHERE status = 'pending' 
+      AND DATE(created_at) = CURRENT_DATE
       ORDER BY created_at ASC 
       LIMIT 10
     `);
