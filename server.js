@@ -704,74 +704,202 @@ app.get('/api/insights', async (req, res) => {
   }
 });
 // 🔷 TV DISPLAY ENDPOINTS - SUPPORT MULTIPLE SERVICES
+// FIXED Server TV Endpoints - server.js (TV Display section)
+
+// 🔥 FIXED TV DISPLAY ENDPOINTS - NO REVENUE EXPOSURE
 app.get('/api/tv/current-services', authenticateToken, async (req, res) => {
   try {
+    // 🔥 FIX: Remove price from TV endpoint for security
+    // 🔥 FIX: Use consistent status values
     const result = await pool.query(`
       SELECT 
-        id, immatriculation, vehicle_brand, vehicle_model, vehicle_color, 
-        service_type, staff, start_time, price
+        id, 
+        immatriculation, 
+        vehicle_brand, 
+        vehicle_model, 
+        vehicle_color, 
+        service_type, 
+        staff, 
+        start_time,
+        created_at,
+        status
       FROM washes 
-      WHERE status = 'active' AND is_active = true 
-      AND DATE(created_at) = CURRENT_DATE
+      WHERE (status = 'active' OR status = 'en_cours') 
+        AND is_active = true 
+        AND DATE(created_at) = CURRENT_DATE
+        AND start_time IS NOT NULL
       ORDER BY start_time ASC 
-      LIMIT 5
+      LIMIT 8
     `);
     
-    res.json(result.rows || []);
+    // 🔥 FIX: Add proper data validation and formatting
+    const services = result.rows.map(service => ({
+      id: service.id,
+      immatriculation: service.immatriculation || 'N/A',
+      vehicle_brand: service.vehicle_brand || '',
+      vehicle_model: service.vehicle_model || '',
+      vehicle_color: service.vehicle_color || '',
+      service_type: service.service_type || 'lavage-ville',
+      staff: Array.isArray(service.staff) ? service.staff : [],
+      start_time: service.start_time,
+      created_at: service.created_at,
+      status: service.status
+    }));
+    
+    console.log(`📺 TV Display: Serving ${services.length} active services`);
+    res.json(services);
+    
   } catch (error) {
-    console.error('Error fetching current services:', error);
-    res.status(500).json({ error: error.message });
+    console.error('❌ Error fetching TV current services:', error);
+    res.status(500).json({ 
+      error: 'Unable to fetch current services',
+      services: [] // Return empty array on error
+    });
   }
 });
 
+// 🔥 FIXED TV QUEUE ENDPOINT - Better filtering
 app.get('/api/tv/queue', authenticateToken, async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
-        id, immatriculation, vehicle_brand, vehicle_model, vehicle_color, 
-        service_type, staff, created_at
+        id, 
+        immatriculation, 
+        vehicle_brand, 
+        vehicle_model, 
+        vehicle_color, 
+        service_type, 
+        staff, 
+        created_at
       FROM washes 
       WHERE status = 'pending' 
-      AND DATE(created_at) = CURRENT_DATE
+        AND is_active = true
+        AND DATE(created_at) = CURRENT_DATE
       ORDER BY created_at ASC 
       LIMIT 10
     `);
     
-    res.json(result.rows);
+    const queue = result.rows.map(service => ({
+      id: service.id,
+      immatriculation: service.immatriculation || 'N/A',
+      vehicle_brand: service.vehicle_brand || '',
+      vehicle_model: service.vehicle_model || '',
+      vehicle_color: service.vehicle_color || '',
+      service_type: service.service_type || 'lavage-ville',
+      staff: Array.isArray(service.staff) ? service.staff : [],
+      created_at: service.created_at,
+      position: result.rows.indexOf(service) + 1
+    }));
+    
+    console.log(`📺 TV Queue: Serving ${queue.length} pending services`);
+    res.json(queue);
+    
   } catch (error) {
-    console.error('Error fetching queue:', error);
+    console.error('❌ Error fetching TV queue:', error);
+    res.status(500).json({ 
+      error: 'Unable to fetch queue',
+      queue: []
+    });
+  }
+});
+
+// 🔥 NEW: TV STATS ENDPOINT - Public safe stats only
+app.get('/api/tv/stats', authenticateToken, async (req, res) => {
+  try {
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) FILTER (WHERE status IN ('active', 'en_cours') AND is_active = true AND DATE(created_at) = CURRENT_DATE) as active_services,
+        COUNT(*) FILTER (WHERE status = 'pending' AND DATE(created_at) = CURRENT_DATE) as pending_services,
+        COUNT(*) FILTER (WHERE status IN ('completed', 'termine') AND DATE(created_at) = CURRENT_DATE) as completed_today,
+        COUNT(*) FILTER (WHERE DATE(created_at) = CURRENT_DATE) as total_today
+      FROM washes
+      WHERE created_at >= CURRENT_DATE
+    `);
+
+    const publicStats = {
+      active_services: parseInt(stats.rows[0]?.active_services || 0),
+      pending_services: parseInt(stats.rows[0]?.pending_services || 0),
+      completed_today: parseInt(stats.rows[0]?.completed_today || 0),
+      total_today: parseInt(stats.rows[0]?.total_today || 0),
+      // 🔥 NO REVENUE DATA FOR TV DISPLAY
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('📺 TV Stats served:', publicStats);
+    res.json(publicStats);
+    
+  } catch (error) {
+    console.error('❌ Error fetching TV stats:', error);
+    res.status(500).json({ 
+      error: 'Unable to fetch stats',
+      active_services: 0,
+      pending_services: 0,
+      completed_today: 0,
+      total_today: 0
+    });
+  }
+});
+
+// 🔥 FIXED MAIN STATS ENDPOINT - Keep revenue for internal dashboard only
+app.get('/api/stats', authenticateToken, async (req, res) => {
+  try {
+    // This endpoint keeps revenue data for internal dashboard use only
+    const stats = await pool.query(`
+      SELECT
+        COUNT(*) as total_washes,
+        COUNT(*) FILTER (WHERE status IN ('active', 'en_cours') AND is_active = true) as ongoing_washes,
+        COUNT(*) FILTER (WHERE status IN ('completed', 'termine')) as completed_washes,
+        COALESCE(SUM(price) FILTER (WHERE status IN ('completed', 'termine')), 0) as total_revenue,
+        COALESCE(AVG(duration) FILTER (WHERE duration > 0), 0) as avg_duration
+      FROM washes
+      WHERE created_at >= CURRENT_DATE
+    `);
+
+    res.json({
+      total_washes: parseInt(stats.rows[0]?.total_washes || 0),
+      ongoing_washes: parseInt(stats.rows[0]?.ongoing_washes || 0),
+      completed_washes: parseInt(stats.rows[0]?.completed_washes || 0),
+      total_revenue: parseFloat(stats.rows[0]?.total_revenue || 0),
+      avg_duration: parseFloat(stats.rows[0]?.avg_duration || 0)
+    });
+    
+  } catch (error) {
+    console.error('❌ Error fetching internal stats:', error);
     res.status(500).json({ error: error.message });
   }
 });
-// POST /api/upload - Upload photos to Cloudinary
-app.post('/api/upload', upload.array('photos', 5), (req, res) => {
-  try {
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({ error: 'No files uploaded' });
-    }
 
-    const fileInfos = req.files.map(file => ({
-      filename: file.filename,
-      originalName: file.originalname,
-      size: file.bytes,
-      url: file.path,
-      publicId: file.public_id,
-      thumbnailUrl: cloudinary.url(file.public_id, {
-        width: 200,
-        height: 200,
-        crop: 'fill',
-        quality: 'auto:low'
-      })
-    }));
-
-    res.json({
-      message: 'Photos uploaded successfully to Cloudinary',
-      files: fileInfos
-    });
-  } catch (error) {
-    console.error('Error uploading photos:', error);
-    res.status(500).json({ error: error.message });
+// 🔥 HELPER: Status standardization middleware
+const standardizeStatus = (req, res, next) => {
+  if (req.body.status) {
+    // Convert various status formats to standard ones
+    const statusMap = {
+      'en_cours': 'active',
+      'en cours': 'active',
+      'actif': 'active',
+      'terminé': 'completed',
+      'termine': 'completed',
+      'fini': 'completed',
+      'en_attente': 'pending',
+      'attente': 'pending'
+    };
+    
+    const normalizedStatus = statusMap[req.body.status.toLowerCase()] || req.body.status;
+    req.body.status = normalizedStatus;
   }
+  next();
+};
+
+// Apply status standardization to relevant routes
+app.use('/api/washes', standardizeStatus);
+
+// 🔥 ENHANCED ERROR HANDLING for TV endpoints
+app.use('/api/tv/*', (err, req, res, next) => {
+  console.error('TV Endpoint Error:', err);
+  res.status(500).json({
+    error: 'TV service temporarily unavailable',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // DELETE /api/upload/:publicId - Delete photo from Cloudinary
