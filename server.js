@@ -353,7 +353,7 @@ app.get('/api/washes', async (req, res) => {
       status,
       serviceType,
       vehicleType,
-      limit = 500,
+      limit = 2500,
       offset = 0
     } = req.query;
 
