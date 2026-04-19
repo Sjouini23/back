@@ -120,8 +120,9 @@ const setupDatabase = async () => {
   end_time TIMESTAMP WITH TIME ZONE,
   duration INTEGER,
   moto_brand VARCHAR(50),
-  moto_model VARCHAR(50), 
+  moto_model VARCHAR(50),
   moto_helmets INTEGER DEFAULT 0,
+  is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 )

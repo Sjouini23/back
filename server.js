@@ -42,7 +42,7 @@ app.use(compression());
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 900, // limit each IP to 100 requests per windowMs
+  max: 900, // limit each IP to 900 requests per windowMs
   message: 'Too many requests from this IP, please try again later.'
 });
 
@@ -93,7 +93,8 @@ app.use(cors({
       return callback(null, true);
     }
 
-    return callback(null, true); // Allow all for now to test
+    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'PATCH', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -157,6 +158,7 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
 // ✅ JWT Authentication Middleware
@@ -201,7 +203,7 @@ const washSchema = Joi.object({
 
 // ✅ Protect API routes with authentication
 app.use('/api', (req, res, next) => {
-  const publicPaths = ['/auth/login', '/auth/verify', '/health'];
+  const publicPaths = ['/auth/login', '/auth/verify', '/health', '/tv'];
   const isPublicPath = publicPaths.some(path => req.path.startsWith(path));
 
   if (isPublicPath) {
@@ -345,6 +347,26 @@ const validateServiceData = (req, res, next) => {
 };
 
 // ✅ PROTECTED - Car wash management endpoints
+
+// Status standardization middleware — must be registered before washes routes
+const standardizeStatus = (req, res, next) => {
+  if (req.body.status) {
+    const statusMap = {
+      'en_cours': 'active',
+      'en cours': 'active',
+      'actif': 'active',
+      'terminé': 'completed',
+      'termine': 'completed',
+      'fini': 'completed',
+      'en_attente': 'pending',
+      'attente': 'pending'
+    };
+    const normalizedStatus = statusMap[req.body.status.toLowerCase()] || req.body.status;
+    req.body.status = normalizedStatus;
+  }
+  next();
+};
+app.use('/api/washes', standardizeStatus);
 
 // GET /api/washes - Get all washes with filters
 app.get('/api/washes', async (req, res) => {
@@ -631,27 +653,6 @@ app.patch('/api/washes/:id/finish', authenticateToken, async (req, res) => {
   }
 });
 
-// GET /api/stats - Dashboard statistics
-app.get('/api/stats', async (req, res) => {
-  try {
-    const stats = await pool.query(`
-      SELECT
-        COUNT(*) as total_washes,
-        COUNT(*) FILTER (WHERE status = 'en_cours') as ongoing_washes,
-        COUNT(*) FILTER (WHERE status = 'termine') as completed_washes,
-        COALESCE(SUM(price) FILTER (WHERE status = 'termine'), 0) as total_revenue,
-        COALESCE(AVG(duration) FILTER (WHERE duration > 0), 0) as avg_duration
-      FROM washes
-      WHERE created_at >= CURRENT_DATE
-    `);
-
-    res.json(stats.rows[0]);
-  } catch (error) {
-    console.error('Error fetching stats:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // GET /api/analytics - Advanced analytics
 app.get('/api/analytics', async (req, res) => {
   try {
@@ -749,7 +750,7 @@ app.get('/api/insights', async (req, res) => {
 // FIXED Server TV Endpoints - server.js (TV Display section)
 
 // 🔥 FIXED TV DISPLAY ENDPOINTS - NO REVENUE EXPOSURE
-app.get('/api/tv/current-services', authenticateToken, async (req, res) => {
+app.get('/api/tv/current-services', async (req, res) => {
   try {
     // 🔥 FIX: Remove price from TV endpoint for security
     // 🔥 FIX: Use consistent status values
@@ -801,7 +802,7 @@ app.get('/api/tv/current-services', authenticateToken, async (req, res) => {
 });
 
 // 🔥 FIXED TV QUEUE ENDPOINT - Better filtering
-app.get('/api/tv/queue', authenticateToken, async (req, res) => {
+app.get('/api/tv/queue', async (req, res) => {
   try {
     const result = await pool.query(`
       SELECT 
@@ -846,7 +847,7 @@ app.get('/api/tv/queue', authenticateToken, async (req, res) => {
 });
 
 // 🔥 NEW: TV STATS ENDPOINT - Public safe stats only
-app.get('/api/tv/stats', authenticateToken, async (req, res) => {
+app.get('/api/tv/stats', async (req, res) => {
   try {
     const stats = await pool.query(`
       SELECT
@@ -910,30 +911,6 @@ app.get('/api/stats', authenticateToken, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// 🔥 HELPER: Status standardization middleware
-const standardizeStatus = (req, res, next) => {
-  if (req.body.status) {
-    // Convert various status formats to standard ones
-    const statusMap = {
-      'en_cours': 'active',
-      'en cours': 'active',
-      'actif': 'active',
-      'terminé': 'completed',
-      'termine': 'completed',
-      'fini': 'completed',
-      'en_attente': 'pending',
-      'attente': 'pending'
-    };
-    
-    const normalizedStatus = statusMap[req.body.status.toLowerCase()] || req.body.status;
-    req.body.status = normalizedStatus;
-  }
-  next();
-};
-
-// Apply status standardization to relevant routes
-app.use('/api/washes', standardizeStatus);
 
 // 🔥 ENHANCED ERROR HANDLING for TV endpoints
 app.use('/api/tv/*', (err, req, res, next) => {
@@ -1010,6 +987,21 @@ app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
+// Security validation — fail fast before binding to port
+if (!process.env.JWT_SECRET) {
+  logger.error('❌ FATAL: JWT_SECRET environment variable is required');
+  process.exit(1);
+}
+if (!process.env.ADMIN_PASSWORD_HASH) {
+  logger.error('❌ FATAL: ADMIN_PASSWORD_HASH environment variable is required');
+  process.exit(1);
+}
+if (!process.env.ADMIN_USERNAME) {
+  logger.error('❌ FATAL: ADMIN_USERNAME environment variable is required');
+  process.exit(1);
+}
+logger.info('✅ Security validation complete');
+
 // Start server
 app.listen(PORT, () => {
   logger.info('🚀 Server Ready', {
@@ -1018,22 +1010,4 @@ app.listen(PORT, () => {
     healthCheck: `http://localhost:${PORT}/api/health`,
     timestamp: new Date().toISOString()
   });
-
-  // Security validation
-  if (!process.env.JWT_SECRET) {
-    logger.error('❌ FATAL: JWT_SECRET environment variable is required');
-    process.exit(1);
-  }
-
-  if (!process.env.ADMIN_PASSWORD_HASH) {
-    logger.error('❌ FATAL: ADMIN_PASSWORD_HASH environment variable is required');
-    process.exit(1);
-  }
-
-  if (!process.env.ADMIN_USERNAME) {
-    logger.error('❌ FATAL: ADMIN_USERNAME environment variable is required');
-    process.exit(1);
-  }
-
-  logger.info('✅ Security validation complete');
 });
