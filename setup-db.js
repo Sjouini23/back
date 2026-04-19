@@ -142,6 +142,19 @@ const setupDatabase = async () => {
     }
     console.log('✅ Indexes created');
 
+    // Create staff_members table
+    await appPool.query(`
+      CREATE TABLE IF NOT EXISTS staff_members (
+        key VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        color VARCHAR(30) DEFAULT 'blue',
+        icon VARCHAR(10) DEFAULT '👨‍🔧',
+        emoji VARCHAR(10) DEFAULT '💪',
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Table "staff_members" created');
+
     // Create AI insights table
     await appPool.query(`
       CREATE TABLE IF NOT EXISTS ai_insights (

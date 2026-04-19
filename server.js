@@ -1010,6 +1010,18 @@ app.use('*', (req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
+// Ensure staff_members table exists (created after initial setup-db.js was run)
+pool.query(`
+  CREATE TABLE IF NOT EXISTS staff_members (
+    key VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    color VARCHAR(30) DEFAULT 'blue',
+    icon VARCHAR(10) DEFAULT '👨‍🔧',
+    emoji VARCHAR(10) DEFAULT '💪',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  )
+`).catch(err => console.error('Failed to create staff_members table:', err.message));
+
 // Start server
 app.listen(PORT, () => {
   logger.info('🚀 Server Ready', {
