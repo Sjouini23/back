@@ -681,6 +681,48 @@ app.get('/api/analytics', async (req, res) => {
   }
 });
 
+// GET /api/staff - Get all staff members
+app.get('/api/staff', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM staff_members ORDER BY created_at ASC');
+    if (result.rows.length === 0) {
+      return res.json({
+        bilal: { name: 'Bilal', color: 'blue', icon: '👨‍🔧', emoji: '💪' },
+        ayoub: { name: 'Ayoub', color: 'green', icon: '👨‍💼', emoji: '🎯' }
+      });
+    }
+    const staff = {};
+    result.rows.forEach(row => {
+      staff[row.key] = { name: row.name, color: row.color, icon: row.icon, emoji: row.emoji };
+    });
+    res.json(staff);
+  } catch (error) {
+    console.error('Error fetching staff:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/staff - Save all staff members
+app.post('/api/staff', async (req, res) => {
+  try {
+    const staffData = req.body;
+    if (!staffData || typeof staffData !== 'object' || Object.keys(staffData).length === 0) {
+      return res.status(400).json({ error: 'Invalid staff data' });
+    }
+    await pool.query('DELETE FROM staff_members');
+    for (const [key, data] of Object.entries(staffData)) {
+      await pool.query(
+        'INSERT INTO staff_members (key, name, color, icon, emoji) VALUES ($1, $2, $3, $4, $5)',
+        [key, data.name, data.color || 'blue', data.icon || '👨‍🔧', data.emoji || '💪']
+      );
+    }
+    res.json({ message: 'Staff saved successfully' });
+  } catch (error) {
+    console.error('Error saving staff:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // GET /api/insights - AI insights
 app.get('/api/insights', async (req, res) => {
   try {
