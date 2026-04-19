@@ -203,7 +203,15 @@ const washSchema = Joi.object({
 
 // ✅ Protect API routes with authentication
 app.use('/api', (req, res, next) => {
-  const publicPaths = ['/auth/login', '/auth/verify', '/health', '/tv'];
+  const publicPaths = [
+    '/auth/login',
+    '/auth/verify',
+    '/health',
+    '/tv',
+    '/availability/slots',
+    '/availability',
+    '/reservations/public',
+  ];
   const isPublicPath = publicPaths.some(path => req.path.startsWith(path));
 
   if (isPublicPath) {
@@ -723,6 +731,244 @@ app.post('/api/staff', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ============================================
+// RESERVATION SYSTEM ENDPOINTS
+// ============================================
+
+// GET /api/availability - Get all availability settings
+app.get('/api/availability', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM availability_settings ORDER BY day_of_week ASC'
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching availability:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/availability - Update availability settings
+app.put('/api/availability', async (req, res) => {
+  try {
+    const { settings } = req.body;
+    if (!Array.isArray(settings)) {
+      return res.status(400).json({ error: 'Invalid settings format' });
+    }
+    for (const setting of settings) {
+      await pool.query(
+        `UPDATE availability_settings
+         SET open_time = $1, close_time = $2, is_open = $3, updated_at = NOW()
+         WHERE day_of_week = $4`,
+        [setting.open_time, setting.close_time, setting.is_open, setting.day_of_week]
+      );
+    }
+    res.json({ message: 'Availability updated successfully' });
+  } catch (error) {
+    console.error('Error updating availability:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/availability/slots?date=2026-04-20 - Get available slots for a date
+app.get('/api/availability/slots', async (req, res) => {
+  try {
+    const { date } = req.query;
+    if (!date) return res.status(400).json({ error: 'Date required' });
+
+    const dateObj = new Date(date);
+    const dayOfWeek = dateObj.getDay();
+
+    // Check if day is blocked
+    const blockedResult = await pool.query(
+      'SELECT * FROM blocked_dates WHERE blocked_date = $1',
+      [date]
+    );
+    if (blockedResult.rows.length > 0) {
+      return res.json({ available: false, slots: [], reason: 'Jour bloqué' });
+    }
+
+    // Get day settings
+    const dayResult = await pool.query(
+      'SELECT * FROM availability_settings WHERE day_of_week = $1',
+      [dayOfWeek]
+    );
+    if (dayResult.rows.length === 0 || !dayResult.rows[0].is_open) {
+      return res.json({ available: false, slots: [], reason: 'Fermé ce jour' });
+    }
+
+    const day = dayResult.rows[0];
+    const openHour = parseInt(day.open_time.split(':')[0]);
+    const closeHour = parseInt(day.close_time.split(':')[0]);
+
+    // Generate all hourly slots
+    const allSlots = [];
+    for (let h = openHour; h < closeHour; h++) {
+      allSlots.push(`${h.toString().padStart(2, '0')}:00`);
+    }
+
+    // Get already booked slots for this date
+    const bookedResult = await pool.query(
+      `SELECT reservation_time FROM reservations
+       WHERE reservation_date = $1 AND status != 'cancelled'`,
+      [date]
+    );
+    const bookedSlots = bookedResult.rows.map(r => r.reservation_time);
+
+    // Filter available slots
+    const availableSlots = allSlots.filter(slot => !bookedSlots.includes(slot));
+
+    res.json({
+      available: true,
+      slots: availableSlots,
+      bookedSlots,
+      openTime: day.open_time,
+      closeTime: day.close_time
+    });
+  } catch (error) {
+    console.error('Error fetching slots:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/blocked-dates - Get all blocked dates
+app.get('/api/blocked-dates', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM blocked_dates ORDER BY blocked_date ASC'
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching blocked dates:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/blocked-dates - Block a date
+app.post('/api/blocked-dates', async (req, res) => {
+  try {
+    const { date, reason } = req.body;
+    if (!date) return res.status(400).json({ error: 'Date required' });
+    await pool.query(
+      'INSERT INTO blocked_dates (blocked_date, reason) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [date, reason || '']
+    );
+    res.json({ message: 'Date blocked successfully' });
+  } catch (error) {
+    console.error('Error blocking date:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE /api/blocked-dates/:date - Unblock a date
+app.delete('/api/blocked-dates/:date', async (req, res) => {
+  try {
+    await pool.query(
+      'DELETE FROM blocked_dates WHERE blocked_date = $1',
+      [req.params.date]
+    );
+    res.json({ message: 'Date unblocked successfully' });
+  } catch (error) {
+    console.error('Error unblocking date:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// GET /api/reservations - Get all reservations (protected)
+app.get('/api/reservations', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM reservations ORDER BY reservation_date ASC, reservation_time ASC'
+    );
+    res.json(result.rows);
+  } catch (error) {
+    console.error('Error fetching reservations:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST /api/reservations/public - Create reservation (PUBLIC - no auth needed)
+app.post('/api/reservations/public', async (req, res) => {
+  try {
+    const {
+      customer_name,
+      customer_phone,
+      license_plate,
+      vehicle_type,
+      service_type,
+      reservation_date,
+      reservation_time,
+      notes
+    } = req.body;
+
+    if (!customer_name || !customer_phone || !license_plate ||
+        !reservation_date || !reservation_time) {
+      return res.status(400).json({ error: 'Tous les champs obligatoires doivent être remplis' });
+    }
+
+    // Check slot is still available
+    const bookedResult = await pool.query(
+      `SELECT id FROM reservations
+       WHERE reservation_date = $1
+       AND reservation_time = $2
+       AND status != 'cancelled'`,
+      [reservation_date, reservation_time]
+    );
+    if (bookedResult.rows.length > 0) {
+      return res.status(409).json({ error: 'Ce créneau est déjà réservé' });
+    }
+
+    // Generate confirmation code
+    const code = 'RES-' + Math.random().toString(36).substring(2, 6).toUpperCase();
+
+    const result = await pool.query(
+      `INSERT INTO reservations
+       (confirmation_code, customer_name, customer_phone, license_plate,
+        vehicle_type, service_type, reservation_date, reservation_time, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING *`,
+      [code, customer_name, customer_phone, license_plate,
+       vehicle_type || 'voiture', service_type || 'lavage-ville',
+       reservation_date, reservation_time, notes || '']
+    );
+
+    res.status(201).json({
+      message: 'Réservation créée avec succès',
+      reservation: result.rows[0],
+      confirmation_code: code
+    });
+  } catch (error) {
+    console.error('Error creating reservation:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// PUT /api/reservations/:id/status - Update reservation status (protected)
+app.put('/api/reservations/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = ['pending', 'confirmed', 'completed', 'cancelled'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Invalid status' });
+    }
+    const result = await pool.query(
+      'UPDATE reservations SET status = $1 WHERE id = $2 RETURNING *',
+      [status, req.params.id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Reservation not found' });
+    }
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating reservation:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ============================================
+// END RESERVATION SYSTEM ENDPOINTS
+// ============================================
 
 // GET /api/insights - AI insights
 app.get('/api/insights', async (req, res) => {
