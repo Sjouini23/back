@@ -718,10 +718,12 @@ app.post('/api/staff', async (req, res) => {
     if (!staffData || typeof staffData !== 'object' || Object.keys(staffData).length === 0) {
       return res.status(400).json({ error: 'Invalid staff data' });
     }
-    await pool.query('DELETE FROM staff_members');
     for (const [key, data] of Object.entries(staffData)) {
       await pool.query(
-        'INSERT INTO staff_members (key, name, color, icon, emoji) VALUES ($1, $2, $3, $4, $5)',
+        `INSERT INTO staff_members (key, name, color, icon, emoji)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (key) DO UPDATE
+         SET name=$2, color=$3, icon=$4, emoji=$5`,
         [key, data.name, data.color || 'blue', data.icon || '👨‍🔧', data.emoji || '💪']
       );
     }
