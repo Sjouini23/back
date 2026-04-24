@@ -727,6 +727,10 @@ app.post('/api/staff', async (req, res) => {
         [key, data.name, data.color || 'blue', data.icon || '👨‍🔧', data.emoji || '💪']
       );
     }
+    await pool.query(
+      `DELETE FROM staff_members WHERE key != ALL($1::text[])`,
+      [Object.keys(staffData)]
+    );
     res.json({ message: 'Staff saved successfully' });
   } catch (error) {
     console.error('Error saving staff:', error);
